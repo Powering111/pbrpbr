@@ -30,7 +30,7 @@ fn vs_main(
     out.position = position;
 
     let rot = mat3x3f(in.rot_0, in.rot_1, in.rot_2);
-    out.normal = rot * in.normal;
+    out.normal = normalize(rot * in.normal);
     return out;
 }
 
@@ -38,5 +38,5 @@ fn vs_main(
 fn fs_main(
     in: VertexOutput
 ) -> @location(0) vec4f {
-    return vec4f(in.normal * 0.5 + vec3f(0.5), 1.0);
+    return vec4f(in.normal, 1.0);
 }

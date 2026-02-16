@@ -13,7 +13,7 @@ impl Transform {
     }
 
     pub fn rot(&self) -> Mat3 {
-        Mat3::from_quat(self.rotation)
+        Mat3::from_quat(self.rotation) * Mat3::from_diagonal(self.scale.recip())
     }
 }
 

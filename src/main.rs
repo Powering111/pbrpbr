@@ -4,7 +4,6 @@ use glam::{Mat4, Vec3};
 use winit::{
     event::{ElementState, KeyEvent, WindowEvent},
     keyboard::{KeyCode, PhysicalKey},
-    window::CursorGrabMode,
 };
 
 mod model;
@@ -26,6 +25,7 @@ struct Context {
     scene: model::Scene,
 
     cursor_visible: bool,
+    focused: bool,
     pressed_key: HashSet<KeyCode>,
     mouse_motion: (f64, f64),
     frame_instant: std::time::Instant,
@@ -129,7 +129,7 @@ impl Context {
             cache: None,
         });
 
-        let scene = model::Scene::from_glb("res/scene.glb").unwrap();
+        let scene = model::Scene::from_glb("res/core.glb").unwrap();
 
         Self {
             window,
@@ -142,7 +142,8 @@ impl Context {
             depth_texture,
             camera_uniform,
             scene,
-            cursor_visible: false,
+            cursor_visible: true,
+            focused: true,
             frame_instant: Instant::now(),
             pressed_key: HashSet::new(),
             mouse_motion: (0.0, 0.0),
@@ -337,6 +338,16 @@ impl Context {
                 .set_cursor_grab(winit::window::CursorGrabMode::None)
                 .unwrap();
         } else {
+            let window_size = self.window.inner_size();
+            self.window
+                .set_cursor_grab(winit::window::CursorGrabMode::None)
+                .unwrap();
+            self.window
+                .set_cursor_position(winit::dpi::PhysicalPosition::new(
+                    window_size.width / 2,
+                    window_size.height / 2,
+                ))
+                .unwrap();
             self.window
                 .set_cursor_grab(winit::window::CursorGrabMode::Locked)
                 .unwrap();
@@ -351,13 +362,15 @@ struct App {
 
 impl winit::application::ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        let icon = winit::window::Icon::from_rgba(include_bytes!("icon").into(), 32, 32).unwrap();
+
         let window = event_loop
             .create_window(
-                winit::window::WindowAttributes::default().with_title("Physically based rendering"),
+                winit::window::WindowAttributes::default()
+                    .with_title("Physically based rendering")
+                    .with_window_icon(Some(icon)),
             )
             .unwrap();
-        window.set_cursor_grab(CursorGrabMode::Locked).unwrap();
-        window.set_cursor_visible(false);
 
         self.context = Some(pollster::block_on(Context::new(Arc::new(window))));
     }
@@ -435,6 +448,10 @@ impl winit::application::ApplicationHandler for App {
                 }
                 _ => (),
             },
+            WindowEvent::Focused(focus) => {
+                context.focused = focus;
+                context.set_cursor_visible(!focus);
+            }
             _ => (),
         }
     }
