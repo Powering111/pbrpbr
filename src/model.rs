@@ -1,15 +1,19 @@
-use glam::{Mat4, Quat, Vec3};
+use glam::{Mat3, Mat4, Quat, Vec3};
 
 #[derive(Clone, Debug)]
 pub struct Transform {
-    translation: Vec3,
-    rotation: Quat,
-    scale: Vec3,
+    pub translation: Vec3,
+    pub rotation: Quat,
+    pub scale: Vec3,
 }
 
 impl Transform {
     pub fn matrix(&self) -> Mat4 {
         Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.translation)
+    }
+
+    pub fn rot(&self) -> Mat3 {
+        Mat3::from_quat(self.rotation)
     }
 }
 
@@ -48,10 +52,40 @@ pub struct Model {
 
 #[derive(Clone, Debug)]
 pub struct Camera {
-    pub transform: Transform,
+    pub position: Vec3,
+    pub yaw: f32,
+    pub pitch: f32,
+    pub roll: f32,
+
     pub yfov: f32,
     pub zfar: Option<f32>,
     pub znear: f32,
+}
+
+impl Camera {
+    pub fn get_matrix(&self, aspect_ratio: f32) -> Mat4 {
+        (match self.zfar {
+            Some(zfar) => Mat4::perspective_rh(self.yfov, aspect_ratio, self.znear, zfar),
+            None => Mat4::perspective_infinite_rh(self.yfov, aspect_ratio, self.znear),
+        }) * Mat4::look_to_rh(self.position, self.direction(), self.up_vec())
+    }
+
+    fn direction(&self) -> Vec3 {
+        Quat::from_euler(glam::EulerRot::ZXYEx, self.roll, self.pitch, self.yaw) * Vec3::NEG_Z
+    }
+
+    fn up_vec(&self) -> Vec3 {
+        Quat::from_euler(glam::EulerRot::ZXYEx, self.roll, self.pitch, self.yaw) * Vec3::Y
+    }
+
+    pub fn forward_vec(&self) -> Vec3 {
+        Vec3::NEG_Z.rotate_axis(Vec3::Y, self.yaw)
+    }
+
+    fn yaw_pitch_roll(quat: Quat) -> (f32, f32, f32) {
+        let (roll, pitch, yaw) = quat.to_euler(glam::EulerRot::ZXYEx);
+        (yaw, pitch, roll)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -79,7 +113,11 @@ impl core::fmt::Display for Scene {
         writeln!(f, "Scene")?;
 
         writeln!(f, "Camera")?;
-        writeln!(f, "{}", self.camera.transform)?;
+        writeln!(
+            f,
+            "position: {}, yaw: {}, pitch: {}, roll: {}",
+            self.camera.position, self.camera.yaw, self.camera.pitch, self.camera.roll
+        )?;
 
         for model in self.models.iter() {
             writeln!(
@@ -117,7 +155,6 @@ impl Visitor {
 
         let mut visitor = Self::default();
         for scene in gltf.scenes() {
-            println!();
             for node in scene.nodes() {
                 visitor.do_visit(&buffer_data, &node);
             }
@@ -132,12 +169,16 @@ impl Visitor {
             for primitive in mesh.primitives() {
                 let reader = primitive.reader(|buffer| Some(buffer_data[buffer.index()]));
                 let positions = reader.read_positions().unwrap();
+                let normals = reader.read_normals().unwrap();
                 let indices = reader.read_indices().unwrap();
 
+                assert_eq!(positions.len(), normals.len());
                 primitives.push(Primitive {
                     vertices: positions
-                        .map(|position| crate::renderer::Vertex {
+                        .zip(normals)
+                        .map(|(position, normal)| crate::renderer::Vertex {
                             position: position.into(),
+                            normal: normal.into(),
                         })
                         .collect(),
                     indices: indices.into_u32().collect(),
@@ -152,13 +193,23 @@ impl Visitor {
 
         if let Some(camera) = node.camera() {
             self.camera = match camera.projection() {
-                gltf::camera::Projection::Orthographic(_orthographic) => todo!(),
-                gltf::camera::Projection::Perspective(perspective) => Some(Camera {
-                    transform: node.transform().into(),
-                    yfov: perspective.yfov(),
-                    zfar: perspective.zfar(),
-                    znear: perspective.znear(),
-                }),
+                gltf::camera::Projection::Orthographic(_orthographic) => {
+                    todo!("Orthographic camera")
+                }
+                gltf::camera::Projection::Perspective(perspective) => {
+                    let transform: Transform = node.transform().into();
+                    let (yaw, pitch, roll) = Camera::yaw_pitch_roll(transform.rotation);
+                    Some(Camera {
+                        position: transform.translation,
+                        yaw,
+                        pitch,
+                        roll,
+
+                        yfov: perspective.yfov(),
+                        zfar: perspective.zfar(),
+                        znear: perspective.znear(),
+                    })
+                }
             }
         }
 

@@ -1,9 +1,10 @@
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc, time::Instant};
 
-use glam::Mat4;
+use glam::{Mat4, Vec3};
 use winit::{
     event::{ElementState, KeyEvent, WindowEvent},
     keyboard::{KeyCode, PhysicalKey},
+    window::CursorGrabMode,
 };
 
 mod model;
@@ -23,6 +24,12 @@ struct Context {
     vertex_buffer: renderer::VertexBuffer,
 
     scene: model::Scene,
+
+    cursor_visible: bool,
+    pressed_key: HashSet<KeyCode>,
+    mouse_motion: (f64, f64),
+    frame_instant: std::time::Instant,
+    time: u64,
 }
 
 impl Context {
@@ -101,8 +108,7 @@ impl Context {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
-                // cull_mode: Some(wgpu::Face::Back),
-                cull_mode: None,
+                cull_mode: Some(wgpu::Face::Back),
                 unclipped_depth: false,
                 polygon_mode: wgpu::PolygonMode::Fill,
                 conservative: false,
@@ -136,25 +142,90 @@ impl Context {
             depth_texture,
             camera_uniform,
             scene,
+            cursor_visible: false,
+            frame_instant: Instant::now(),
+            pressed_key: HashSet::new(),
+            mouse_motion: (0.0, 0.0),
+            time: 0,
         }
+    }
+
+    fn is_key_pressed(&mut self, code: KeyCode) -> bool {
+        self.pressed_key.contains(&code)
+    }
+
+    fn update(&mut self) {
+        let now = Instant::now();
+        let dt = now - self.frame_instant;
+        self.frame_instant = now;
+
+        self.time += dt.as_nanos() as u64;
+
+        let camera_speed = 10.0;
+        let forward_dir = self.scene.camera.forward_vec();
+
+        let right_dir = forward_dir.cross(Vec3::Y);
+
+        let mut dir = Vec3::ZERO;
+        if self.is_key_pressed(KeyCode::KeyW) {
+            dir += forward_dir;
+        }
+        if self.is_key_pressed(KeyCode::KeyS) {
+            dir -= forward_dir;
+        }
+        if self.is_key_pressed(KeyCode::KeyA) {
+            dir -= right_dir;
+        }
+        if self.is_key_pressed(KeyCode::KeyD) {
+            dir += right_dir;
+        }
+        if self.is_key_pressed(KeyCode::Space) {
+            dir += Vec3::Y;
+        }
+        if self.is_key_pressed(KeyCode::ShiftLeft) {
+            dir += Vec3::NEG_Y;
+        }
+
+        self.scene.camera.position += dir.normalize_or_zero() * camera_speed * dt.as_secs_f32();
+
+        let sensitivity = 0.002;
+        self.scene.camera.yaw -= sensitivity * self.mouse_motion.0 as f32;
+        self.scene.camera.pitch -= sensitivity * self.mouse_motion.1 as f32;
+
+        self.mouse_motion = (0.0, 0.0);
+
+        let sensitivity = 1.0;
+        if self.is_key_pressed(KeyCode::ArrowLeft) {
+            self.scene.camera.yaw += sensitivity * dt.as_secs_f32();
+        }
+        if self.is_key_pressed(KeyCode::ArrowRight) {
+            self.scene.camera.yaw -= sensitivity * dt.as_secs_f32();
+        }
+        if self.is_key_pressed(KeyCode::ArrowUp) {
+            self.scene.camera.pitch += sensitivity * dt.as_secs_f32();
+        }
+        if self.is_key_pressed(KeyCode::ArrowDown) {
+            self.scene.camera.pitch -= sensitivity * dt.as_secs_f32();
+        }
+        self.scene.camera.pitch = f32::clamp(
+            self.scene.camera.pitch,
+            -std::f32::consts::PI * 0.5,
+            std::f32::consts::PI * 0.5,
+        );
+
+        if self.is_key_pressed(KeyCode::Minus) {
+            self.scene.camera.yfov += 0.002
+        }
+        if self.is_key_pressed(KeyCode::Equal) {
+            self.scene.camera.yfov -= 0.002
+        }
+        self.scene.camera.yfov = f32::clamp(self.scene.camera.yfov, 0.01, std::f32::consts::PI);
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         let aspect_ratio =
             self.surface_configuration.width as f32 / self.surface_configuration.height as f32;
-        let camera_matrix = match self.scene.camera.zfar {
-            Some(zfar) => Mat4::perspective_rh(
-                self.scene.camera.yfov,
-                aspect_ratio,
-                self.scene.camera.znear,
-                zfar,
-            ),
-            None => Mat4::perspective_infinite_rh(
-                self.scene.camera.yfov,
-                aspect_ratio,
-                self.scene.camera.znear,
-            ),
-        } * self.scene.camera.transform.matrix().inverse();
+        let camera_matrix = self.scene.camera.get_matrix(aspect_ratio);
         self.camera_uniform
             .write(&self.queue, bytemuck::cast_slice(&[camera_matrix]));
 
@@ -176,6 +247,7 @@ impl Context {
 
                 instances.push(renderer::Instance {
                     model: model.transform.matrix(),
+                    rot: model.transform.rot(),
                 });
             }
         }
@@ -238,6 +310,13 @@ impl Context {
         Ok(())
     }
 
+    fn add_mouse_motion(&mut self, delta: (f64, f64)) {
+        if !self.cursor_visible {
+            self.mouse_motion.0 += delta.0;
+            self.mouse_motion.1 += delta.1;
+        }
+    }
+
     fn resize(&mut self, width: u32, height: u32) {
         self.surface_configuration.width = width;
         self.surface_configuration.height = height;
@@ -248,6 +327,20 @@ impl Context {
             texture::Texture::create_depth_texture(&self.device, &self.surface_configuration);
 
         self.window.request_redraw();
+    }
+
+    fn set_cursor_visible(&mut self, visible: bool) {
+        self.cursor_visible = visible;
+        self.window.set_cursor_visible(visible);
+        if visible {
+            self.window
+                .set_cursor_grab(winit::window::CursorGrabMode::None)
+                .unwrap();
+        } else {
+            self.window
+                .set_cursor_grab(winit::window::CursorGrabMode::Locked)
+                .unwrap();
+        }
     }
 }
 
@@ -263,8 +356,26 @@ impl winit::application::ApplicationHandler for App {
                 winit::window::WindowAttributes::default().with_title("Physically based rendering"),
             )
             .unwrap();
+        window.set_cursor_grab(CursorGrabMode::Locked).unwrap();
+        window.set_cursor_visible(false);
 
         self.context = Some(pollster::block_on(Context::new(Arc::new(window))));
+    }
+
+    fn device_event(
+        &mut self,
+        _event_loop: &winit::event_loop::ActiveEventLoop,
+        _device_id: winit::event::DeviceId,
+        event: winit::event::DeviceEvent,
+    ) {
+        let context = match &mut self.context {
+            Some(context) => context,
+            None => return,
+        };
+
+        if let winit::event::DeviceEvent::MouseMotion { delta } = event {
+            context.add_mouse_motion(delta);
+        }
     }
 
     fn window_event(
@@ -281,6 +392,7 @@ impl winit::application::ApplicationHandler for App {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::RedrawRequested => {
+                context.update();
                 // redraw
                 if let Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) =
                     context.render()
@@ -288,18 +400,41 @@ impl winit::application::ApplicationHandler for App {
                     let size = context.window.inner_size();
                     context.resize(size.width, size.height);
                 }
+
+                context.window.request_redraw();
             }
-            WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        physical_key: PhysicalKey::Code(KeyCode::Escape),
-                        state: ElementState::Pressed,
-                        ..
-                    },
-                ..
-            } => {
-                event_loop.exit();
-            }
+            WindowEvent::KeyboardInput { event, .. } => match event {
+                KeyEvent {
+                    physical_key: PhysicalKey::Code(KeyCode::Escape),
+                    state: ElementState::Pressed,
+                    ..
+                } => event_loop.exit(),
+
+                KeyEvent {
+                    physical_key: PhysicalKey::Code(KeyCode::AltLeft),
+                    state,
+                    ..
+                } => match state {
+                    ElementState::Pressed => {
+                        context.set_cursor_visible(true);
+                    }
+                    ElementState::Released => {
+                        context.set_cursor_visible(false);
+                    }
+                },
+                KeyEvent {
+                    physical_key: PhysicalKey::Code(code),
+                    state,
+                    ..
+                } => {
+                    if state.is_pressed() {
+                        context.pressed_key.insert(code);
+                    } else {
+                        context.pressed_key.remove(&code);
+                    }
+                }
+                _ => (),
+            },
             _ => (),
         }
     }

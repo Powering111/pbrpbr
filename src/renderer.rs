@@ -1,13 +1,15 @@
-use glam::{Mat4, Vec3};
+use glam::{Mat3, Mat4, Vec3};
 
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug, bytemuck::Zeroable, bytemuck::Pod)]
 pub struct Vertex {
     pub position: Vec3,
+    pub normal: Vec3,
 }
 
 impl Vertex {
-    const ATTRIBS: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![0 => Float32x3];
+    const ATTRIBS: [wgpu::VertexAttribute; 2] =
+        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
 
     pub fn desc() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
@@ -22,11 +24,14 @@ impl Vertex {
 #[derive(Clone, Copy, Debug, bytemuck::Zeroable, bytemuck::Pod)]
 pub struct Instance {
     pub model: Mat4,
+    pub rot: Mat3,
 }
 
 impl Instance {
-    const ATTRIBS: [wgpu::VertexAttribute; 4] =
-        wgpu::vertex_attr_array![1 => Float32x4, 2 => Float32x4, 3 => Float32x4, 4 => Float32x4];
+    const ATTRIBS: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![
+        2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4,
+        6 => Float32x3, 7 => Float32x3, 8 => Float32x3
+    ];
 
     pub fn desc() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
