@@ -123,53 +123,68 @@ impl VertexBuffer {
 }
 
 pub(crate) struct Uniform {
-    buffer: wgpu::Buffer,
+    buffers: Vec<wgpu::Buffer>,
     pub bind_group_layout: wgpu::BindGroupLayout,
     bind_group: wgpu::BindGroup,
 }
 
 impl Uniform {
-    pub(crate) fn new(device: &wgpu::Device, size: u64) -> Self {
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: None,
-            size,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
-            mapped_at_creation: false,
-        });
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: None,
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+    pub(crate) fn new(device: &wgpu::Device, size: &[u64]) -> Self {
+        let buffers: Vec<wgpu::Buffer> = size
+            .iter()
+            .map(|size| {
+                device.create_buffer(&wgpu::BufferDescriptor {
+                    label: None,
+                    size: *size,
+                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
+                    mapped_at_creation: false,
+                })
+            })
+            .collect();
+
+        let layout_entries: Vec<wgpu::BindGroupLayoutEntry> = (0..buffers.len())
+            .map(|i| wgpu::BindGroupLayoutEntry {
+                binding: i as u32,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
                     min_binding_size: None,
                 },
                 count: None,
-            }],
-        });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            })
+            .collect();
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: None,
-            layout: &bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
+            entries: &layout_entries,
+        });
+
+        let entries: Vec<wgpu::BindGroupEntry<'_>> = buffers
+            .iter()
+            .enumerate()
+            .map(|(i, buffer)| wgpu::BindGroupEntry {
+                binding: i as u32,
                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &buffer,
+                    buffer,
                     offset: 0,
                     size: None,
                 }),
-            }],
+            })
+            .collect();
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &bind_group_layout,
+            entries: &entries,
         });
         Self {
-            buffer,
+            buffers,
             bind_group_layout,
             bind_group,
         }
     }
 
-    pub(crate) fn write(&self, queue: &wgpu::Queue, data: &[u8]) {
-        queue.write_buffer(&self.buffer, 0, data);
+    pub(crate) fn write(&self, queue: &wgpu::Queue, index: u32, data: &[u8]) {
+        queue.write_buffer(&self.buffers[index as usize], 0, data);
     }
 
     pub(crate) fn set(&self, render_pass: &mut wgpu::RenderPass, bind_group_index: u32) {

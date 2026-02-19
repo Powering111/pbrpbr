@@ -19,7 +19,7 @@ struct Context {
     render_pipeline: wgpu::RenderPipeline,
     depth_texture: texture::Texture,
 
-    camera_uniform: renderer::Uniform,
+    scene_uniform: renderer::Uniform,
     vertex_buffer: renderer::VertexBuffer,
 
     scene: model::Scene,
@@ -75,13 +75,20 @@ impl Context {
 
         let depth_texture = texture::Texture::create_depth_texture(&device, &surface_configuration);
 
-        let camera_uniform = renderer::Uniform::new(&device, size_of::<Mat4>() as u64);
+        let scene_uniform = renderer::Uniform::new(
+            &device,
+            &[
+                size_of::<Mat4>() as u64,
+                size_of::<Vec3>() as u64,
+                4 * size_of::<model::Light>() as u64,
+            ],
+        );
         let vertex_buffer = renderer::VertexBuffer::new(&device);
 
         let shader = device.create_shader_module(wgpu::include_wgsl!("shader/shader.wgsl"));
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: &[&camera_uniform.bind_group_layout],
+            bind_group_layouts: &[&scene_uniform.bind_group_layout],
             immediate_size: 0,
         });
 
@@ -129,7 +136,7 @@ impl Context {
             cache: None,
         });
 
-        let scene = model::Scene::from_glb("res/core.glb").unwrap();
+        let scene = model::Scene::from_glb("res/scene.glb").unwrap();
 
         Self {
             window,
@@ -140,7 +147,7 @@ impl Context {
             render_pipeline,
             vertex_buffer,
             depth_texture,
-            camera_uniform,
+            scene_uniform,
             scene,
             cursor_visible: true,
             focused: true,
@@ -227,15 +234,22 @@ impl Context {
         let aspect_ratio =
             self.surface_configuration.width as f32 / self.surface_configuration.height as f32;
         let camera_matrix = self.scene.camera.get_matrix(aspect_ratio);
-        self.camera_uniform
-            .write(&self.queue, bytemuck::cast_slice(&[camera_matrix]));
+        self.scene_uniform
+            .write(&self.queue, 0, bytemuck::cast_slice(&[camera_matrix]));
+        self.scene_uniform.write(
+            &self.queue,
+            1,
+            bytemuck::cast_slice(&[self.scene.camera.position]),
+        );
+        self.scene_uniform
+            .write(&self.queue, 2, bytemuck::cast_slice(&self.scene.lights));
 
         let mut vertices: Vec<renderer::Vertex> = Vec::new();
         let mut indices: Vec<u32> = Vec::new();
         let mut instances: Vec<renderer::Instance> = Vec::new();
         let mut draws: Vec<(u32, u32, i32, u32)> = Vec::new();
-        for model in self.scene.models.iter() {
-            for primitive in model.primitives.iter() {
+        for mesh in self.scene.meshes.iter() {
+            for primitive in mesh.primitives.iter() {
                 let base_index = vertices.len() as i32;
                 draws.push((
                     indices.len() as u32,
@@ -247,8 +261,8 @@ impl Context {
                 indices.extend_from_slice(primitive.indices.as_slice());
 
                 instances.push(renderer::Instance {
-                    model: model.transform.matrix(),
-                    rot: model.transform.rot(),
+                    model: mesh.transform.matrix(),
+                    rot: mesh.transform.rot(),
                 });
             }
         }
@@ -294,7 +308,7 @@ impl Context {
             render_pass.set_pipeline(&self.render_pipeline);
 
             self.vertex_buffer.set(&mut render_pass);
-            self.camera_uniform.set(&mut render_pass, 0);
+            self.scene_uniform.set(&mut render_pass, 0);
 
             for (index_start, index_end, base_index, instance_num) in draws {
                 render_pass.draw_indexed(

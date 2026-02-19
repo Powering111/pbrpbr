@@ -44,7 +44,7 @@ pub struct Primitive {
 }
 
 #[derive(Clone, Debug)]
-pub struct Model {
+pub struct Mesh {
     pub name: Option<String>,
     pub transform: Transform,
     pub primitives: Vec<Primitive>,
@@ -88,10 +88,20 @@ impl Camera {
     }
 }
 
+#[repr(C, packed)]
+#[derive(Clone, Copy, Debug, bytemuck::Zeroable, bytemuck::Pod)]
+pub struct Light {
+    pub pos: Vec3,
+    pub typ: u32,
+    pub color: Vec3,
+    pub intensity: f32,
+}
+
 #[derive(Clone, Debug)]
 pub struct Scene {
     pub camera: Camera,
-    pub models: Vec<Model>,
+    pub lights: Vec<Light>,
+    pub meshes: Vec<Mesh>,
 }
 impl Scene {
     pub fn from_glb(path: &str) -> Result<Self, ()> {
@@ -101,9 +111,11 @@ impl Scene {
 
         let visitor = Visitor::visit(gltf);
 
+        assert!(visitor.lights.len() <= 4);
         Ok(Self {
             camera: visitor.camera.expect("scene need at least one camera"),
-            models: visitor.models,
+            lights: visitor.lights,
+            meshes: visitor.meshes,
         })
     }
 }
@@ -119,15 +131,15 @@ impl core::fmt::Display for Scene {
             self.camera.position, self.camera.yaw, self.camera.pitch, self.camera.roll
         )?;
 
-        for model in self.models.iter() {
+        for mesh in self.meshes.iter() {
             writeln!(
                 f,
                 "\"{}\" - {} primitive{}",
-                model.name.as_deref().unwrap_or(""),
-                model.primitives.len(),
-                if model.primitives.len() > 2 { "s" } else { "" }
+                mesh.name.as_deref().unwrap_or(""),
+                mesh.primitives.len(),
+                if mesh.primitives.len() > 2 { "s" } else { "" }
             )?;
-            writeln!(f, "{}", model.transform,)?;
+            writeln!(f, "{}", mesh.transform,)?;
         }
         Ok(())
     }
@@ -136,7 +148,8 @@ impl core::fmt::Display for Scene {
 #[derive(Default)]
 struct Visitor {
     camera: Option<Camera>,
-    models: Vec<Model>,
+    lights: Vec<Light>,
+    meshes: Vec<Mesh>,
 }
 
 impl Visitor {
@@ -164,6 +177,8 @@ impl Visitor {
     }
 
     fn do_visit(&mut self, buffer_data: &[&[u8]], node: &gltf::Node) {
+        let transform: Transform = node.transform().into();
+
         if let Some(mesh) = node.mesh() {
             let mut primitives = Vec::new();
             for primitive in mesh.primitives() {
@@ -184,7 +199,7 @@ impl Visitor {
                     indices: indices.into_u32().collect(),
                 })
             }
-            self.models.push(Model {
+            self.meshes.push(Mesh {
                 name: node.name().map(|a| a.to_owned()),
                 transform: node.transform().into(),
                 primitives,
@@ -197,7 +212,6 @@ impl Visitor {
                     todo!("Orthographic camera")
                 }
                 gltf::camera::Projection::Perspective(perspective) => {
-                    let transform: Transform = node.transform().into();
                     let (yaw, pitch, roll) = Camera::yaw_pitch_roll(transform.rotation);
                     Some(Camera {
                         position: transform.translation,
@@ -210,6 +224,18 @@ impl Visitor {
                         znear: perspective.znear(),
                     })
                 }
+            }
+        }
+
+        if let Some(light) = node.light() {
+            match light.kind() {
+                gltf::khr_lights_punctual::Kind::Point => self.lights.push(Light {
+                    typ: 1,
+                    pos: transform.translation,
+                    color: light.color().into(),
+                    intensity: light.intensity(),
+                }),
+                _ => todo!(),
             }
         }
 
