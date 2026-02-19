@@ -30,6 +30,11 @@ struct Context {
     mouse_motion: (f64, f64),
     frame_instant: std::time::Instant,
     time: u64,
+
+    // temporary global material
+    roughness: f32,
+    metallic: f32,
+    hue: f32,
 }
 
 impl Context {
@@ -81,6 +86,7 @@ impl Context {
                 size_of::<Mat4>() as u64,
                 size_of::<Vec3>() as u64,
                 4 * size_of::<model::Light>() as u64,
+                size_of::<Vec3>() as u64,
             ],
         );
         let vertex_buffer = renderer::VertexBuffer::new(&device);
@@ -155,6 +161,9 @@ impl Context {
             pressed_key: HashSet::new(),
             mouse_motion: (0.0, 0.0),
             time: 0,
+            roughness: 1.0,
+            metallic: 0.0,
+            hue: 1.0,
         }
     }
 
@@ -165,6 +174,7 @@ impl Context {
     fn update(&mut self) {
         let now = Instant::now();
         let dt = now - self.frame_instant;
+        let dt_sec = dt.as_secs_f32();
         self.frame_instant = now;
 
         self.time += dt.as_nanos() as u64;
@@ -194,7 +204,7 @@ impl Context {
             dir += Vec3::NEG_Y;
         }
 
-        self.scene.camera.position += dir.normalize_or_zero() * camera_speed * dt.as_secs_f32();
+        self.scene.camera.position += dir.normalize_or_zero() * camera_speed * dt_sec;
 
         let sensitivity = 0.002;
         self.scene.camera.yaw -= sensitivity * self.mouse_motion.0 as f32;
@@ -204,16 +214,16 @@ impl Context {
 
         let sensitivity = 1.0;
         if self.is_key_pressed(KeyCode::ArrowLeft) {
-            self.scene.camera.yaw += sensitivity * dt.as_secs_f32();
+            self.scene.camera.yaw += sensitivity * dt_sec;
         }
         if self.is_key_pressed(KeyCode::ArrowRight) {
-            self.scene.camera.yaw -= sensitivity * dt.as_secs_f32();
+            self.scene.camera.yaw -= sensitivity * dt_sec;
         }
         if self.is_key_pressed(KeyCode::ArrowUp) {
-            self.scene.camera.pitch += sensitivity * dt.as_secs_f32();
+            self.scene.camera.pitch += sensitivity * dt_sec;
         }
         if self.is_key_pressed(KeyCode::ArrowDown) {
-            self.scene.camera.pitch -= sensitivity * dt.as_secs_f32();
+            self.scene.camera.pitch -= sensitivity * dt_sec;
         }
         self.scene.camera.pitch = f32::clamp(
             self.scene.camera.pitch,
@@ -222,12 +232,48 @@ impl Context {
         );
 
         if self.is_key_pressed(KeyCode::Minus) {
-            self.scene.camera.yfov += 0.002
+            self.scene.camera.yfov += 0.5 * dt_sec
         }
         if self.is_key_pressed(KeyCode::Equal) {
-            self.scene.camera.yfov -= 0.002
+            self.scene.camera.yfov -= 0.5 * dt_sec
         }
         self.scene.camera.yfov = f32::clamp(self.scene.camera.yfov, 0.01, std::f32::consts::PI);
+
+        // change material
+        let mut material_changed = false;
+        if self.is_key_pressed(KeyCode::KeyU) {
+            self.roughness += 0.5 * dt_sec;
+            material_changed = true;
+        }
+        if self.is_key_pressed(KeyCode::KeyJ) {
+            self.roughness -= 0.5 * dt_sec;
+            material_changed = true;
+        }
+        if self.is_key_pressed(KeyCode::KeyI) {
+            self.metallic += 0.5 * dt_sec;
+            material_changed = true;
+        }
+        if self.is_key_pressed(KeyCode::KeyK) {
+            self.metallic -= 0.5 * dt_sec;
+            material_changed = true;
+        }
+        if self.is_key_pressed(KeyCode::KeyO) {
+            self.hue += 0.5 * dt_sec;
+            material_changed = true;
+        }
+        if self.is_key_pressed(KeyCode::KeyL) {
+            self.hue -= 0.5 * dt_sec;
+            material_changed = true;
+        }
+        if material_changed {
+            self.roughness = f32::clamp(self.roughness, 0.0, 1.0);
+            self.metallic = f32::clamp(self.metallic, 0.0, 1.0);
+            self.hue = f32::clamp(self.hue, 0.0, 1.0);
+            println!(
+                "Material: Roughness {:.3} / Metallic {:.3} / Hue {:.3}",
+                self.roughness, self.metallic, self.hue
+            );
+        }
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
@@ -243,6 +289,11 @@ impl Context {
         );
         self.scene_uniform
             .write(&self.queue, 2, bytemuck::cast_slice(&self.scene.lights));
+        self.scene_uniform.write(
+            &self.queue,
+            3,
+            bytemuck::cast_slice(&[Vec3::new(self.roughness, self.metallic, self.hue)]),
+        );
 
         let mut vertices: Vec<renderer::Vertex> = Vec::new();
         let mut indices: Vec<u32> = Vec::new();

@@ -94,7 +94,7 @@ pub struct Light {
     pub pos: Vec3,
     pub typ: u32,
     pub color: Vec3,
-    pub intensity: f32,
+    pub radiant_flux: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -233,7 +233,7 @@ impl Visitor {
                     typ: 1,
                     pos: transform.translation,
                     color: light.color().into(),
-                    intensity: light.intensity(),
+                    radiant_flux: light.intensity() * 4.0 * std::f32::consts::PI / 683.0,
                 }),
                 _ => todo!(),
             }
