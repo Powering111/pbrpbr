@@ -1,4 +1,4 @@
-use glam::{Mat3, Mat4, Quat, Vec3};
+use glam::{Mat3, Mat4, Quat, Vec3, Vec4};
 
 #[derive(Clone, Debug)]
 pub struct Transform {
@@ -41,6 +41,15 @@ impl From<gltf::scene::Transform> for Transform {
 pub struct Primitive {
     pub vertices: Vec<crate::renderer::Vertex>,
     pub indices: Vec<u32>,
+    pub material: Material,
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy, Debug, bytemuck::Zeroable, bytemuck::Pod)]
+pub struct Material {
+    pub base_color: Vec4,
+    pub metallic: f32,
+    pub roughness: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -186,8 +195,26 @@ impl Visitor {
                 let positions = reader.read_positions().unwrap();
                 let normals = reader.read_normals().unwrap();
                 let indices = reader.read_indices().unwrap();
-
                 assert_eq!(positions.len(), normals.len());
+
+                let i_material = primitive.material();
+
+                let pbr_metallic_roughness = i_material.pbr_metallic_roughness();
+                let base_color = pbr_metallic_roughness.base_color_factor();
+                let metallic = pbr_metallic_roughness.metallic_factor();
+                let roughness = pbr_metallic_roughness.roughness_factor();
+                assert!(
+                    i_material
+                        .pbr_metallic_roughness()
+                        .metallic_roughness_texture()
+                        .is_none()
+                );
+                let material = Material {
+                    base_color: base_color.into(),
+                    metallic,
+                    roughness,
+                };
+
                 primitives.push(Primitive {
                     vertices: positions
                         .zip(normals)
@@ -197,6 +224,7 @@ impl Visitor {
                         })
                         .collect(),
                     indices: indices.into_u32().collect(),
+                    material,
                 })
             }
             self.meshes.push(Mesh {

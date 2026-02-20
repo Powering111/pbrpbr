@@ -38,6 +38,13 @@ struct Light {
     intensity: f32,
 }
 
+struct Material {
+    base_color: vec4f,
+    metallic: f32,
+    roughness: f32,
+}
+
+
 @vertex
 fn vs_main(
     in: VertexInput,
@@ -56,8 +63,8 @@ fn vs_main(
 @group(0) @binding(2)
 var<uniform> lights: array<Light, 4>;
 
-@group(0) @binding(3)
-var<uniform> material: vec3f;
+@group(1) @binding(0)
+var<uniform> material: Material;
 
 @fragment
 fn fs_main(
@@ -72,64 +79,14 @@ fn fs_main(
                 let light_in = in.world_pos - light.pos;
                 let light_out = camera_pos - in.world_pos;
 
-                let light_in_n = normalize(-light_in);
-                let light_out_n = normalize(light_out);
+                let light_dir = normalize(-light_in);
+                let view_dir = normalize(light_out);
 
-                let halfway = normalize(light_in_n + light_out_n);
 
                 let light_distance = length(light_in);
-                let light_power = 0.01 * light.intensity / (light_distance * light_distance);
-                
-                let roughness = material.x;
-                let metallic = material.y;
-                let hue = material.z;
-                let hueX = 1.0 - abs((hue * 6.0) % 2.0 - 1.0);
-                var albedo = vec3f(1.0);
-                switch(u32(hue * 6.0)) {
-                    case 0: {
-                        albedo = vec3f(1.0, hueX, 0.0);
-                    }
-                    case 1: {
-                        albedo = vec3f(hueX, 1.0, 0.0);
-                    }
-                    case 2: {
-                        albedo = vec3f(0.0, 1.0, hueX);
-                    }
-                    case 3: {
-                        albedo = vec3f(0.0, hueX, 1.0);
-                    }
-                    case 4: {
-                        albedo = vec3f(hueX, 0.0, 1.0);
-                    }
-                    case 5: {
-                        albedo = vec3f(1.0, 0.0, hueX);
-                    }
-                    default: {
+                let light_power = light.intensity / (light_distance * light_distance);
 
-                    }
-                }
-
-                let f_0 = mix(vec3f(0.4), albedo, metallic);
-                let fresnel = f_0 + (1 - f_0) * pow((1 - dot(halfway, light_out_n)), 5.0);
-
-                let k_s = fresnel;
-                let k_d = (vec3f(1.0) - k_s) * (1.0 - metallic);
-                let diffuse = albedo / PI;
-
-                let roughness2 = roughness * roughness;
-                let distribution = roughness2 / (PI * pow(pow(dot(normal, halfway), 2.0) * (roughness2 - 1) + 1, 2.0));
-
-                let k = pow(roughness2 + 1.0, 2.0) / 8.0;
-
-                let normal_dot_in = dot(normal, light_in_n);
-                let normal_dot_out = dot(normal, light_out_n);
-                let geometry = (normal_dot_in / (normal_dot_in * (1-k)+k)) * (normal_dot_out / (normal_dot_out * (1-k)+k));
-
-                let specular = (fresnel * distribution * geometry) / (4 * dot(light_in_n, halfway) * dot(light_out_n, halfway));
-
-                let brdf = k_d * diffuse + k_s * specular;
-
-                color += brdf * light_power * max(normal_dot_in, 0.0);
+                color += brdf(light_dir, view_dir, normal) * light_power * max(dot(normal, light_dir), 0.0);
             }
             default: {
 
@@ -137,5 +94,52 @@ fn fs_main(
         }
     }
 
+    color = tone_map(color);
     return vec4f(color, 1.0);
+}
+
+fn brdf(light_dir: vec3f, view_dir: vec3f, normal: vec3f) -> vec3f {
+    let halfway = normalize(light_dir + view_dir);
+
+    let roughness = material.roughness;
+    let metallic = material.metallic;
+    var albedo = material.base_color.xyz;
+    
+    let f_0 = mix(vec3f(0.4), albedo, metallic);
+    let fresnel = f_0 + (1 - f_0) * pow((1 - dot(halfway, view_dir)), 5.0);
+
+    let k_s = fresnel;
+    let k_d = (vec3f(1.0) - k_s) * (1.0 - metallic);
+    let diffuse = albedo / PI;
+
+    let roughness2 = roughness * roughness;
+    let distribution = roughness2 / (PI * pow(pow(dot(normal, halfway), 2.0) * (roughness2 - 1) + 1, 2.0));
+
+    let k = pow(roughness2 + 1.0, 2.0) / 8.0;
+
+    let normal_dot_light = dot(normal, light_dir);
+    let normal_dot_view = dot(normal, view_dir);
+    let geometry = (normal_dot_light / (normal_dot_light * (1-k)+k))
+        * (normal_dot_view / (normal_dot_view * (1-k)+k));
+
+    let specular = (fresnel * distribution * geometry)
+        / (4 * dot(light_dir, halfway) * dot(view_dir, halfway));
+    return k_d * diffuse + k_s * specular;
+}
+
+fn tone_map(hdr: vec3f) -> vec3f {
+    let m1 = mat3x3(
+        0.59719, 0.07600, 0.02840,
+        0.35458, 0.90834, 0.13383,
+        0.04823, 0.01566, 0.83777,
+    );
+    let m2 = mat3x3(
+        1.60475, -0.10208, -0.00327,
+        -0.53108,  1.10813, -0.07276,
+        -0.07367, -0.00605,  1.07602,
+    );
+    let v = m1 * hdr;
+    let a = v * (v + 0.0245786) - 0.000090537;
+    let b = v * (0.983729 * v + 0.4329510) + 0.238081;
+    return clamp(m2 * (a / b), vec3(0.0), vec3(1.0));
 }

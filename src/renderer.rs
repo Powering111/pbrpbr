@@ -122,27 +122,16 @@ impl VertexBuffer {
     }
 }
 
-pub(crate) struct Uniform {
-    buffers: Vec<wgpu::Buffer>,
+pub(crate) struct UniformGroup {
+    sizes: Vec<u64>,
     pub bind_group_layout: wgpu::BindGroupLayout,
-    bind_group: wgpu::BindGroup,
+    pub bind_groups: Vec<(Vec<wgpu::Buffer>, wgpu::BindGroup)>,
 }
 
-impl Uniform {
-    pub(crate) fn new(device: &wgpu::Device, size: &[u64]) -> Self {
-        let buffers: Vec<wgpu::Buffer> = size
-            .iter()
-            .map(|size| {
-                device.create_buffer(&wgpu::BufferDescriptor {
-                    label: None,
-                    size: *size,
-                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
-                    mapped_at_creation: false,
-                })
-            })
-            .collect();
-
-        let layout_entries: Vec<wgpu::BindGroupLayoutEntry> = (0..buffers.len())
+impl UniformGroup {
+    // each entry of `sizes` represent size of each binding
+    pub(crate) fn new(device: &wgpu::Device, sizes: &[u64]) -> Self {
+        let layout_entries: Vec<wgpu::BindGroupLayoutEntry> = (0..sizes.len())
             .map(|i| wgpu::BindGroupLayoutEntry {
                 binding: i as u32,
                 visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
@@ -159,35 +148,75 @@ impl Uniform {
             entries: &layout_entries,
         });
 
-        let entries: Vec<wgpu::BindGroupEntry<'_>> = buffers
-            .iter()
-            .enumerate()
-            .map(|(i, buffer)| wgpu::BindGroupEntry {
-                binding: i as u32,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer,
-                    offset: 0,
-                    size: None,
-                }),
-            })
-            .collect();
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &bind_group_layout,
-            entries: &entries,
-        });
         Self {
-            buffers,
+            sizes: sizes.to_owned(),
             bind_group_layout,
-            bind_group,
+            bind_groups: Vec::new(),
         }
     }
 
-    pub(crate) fn write(&self, queue: &wgpu::Queue, index: u32, data: &[u8]) {
-        queue.write_buffer(&self.buffers[index as usize], 0, data);
+    // create bindable bind group. returns bind group id.
+    pub(crate) fn add_bind_group(&mut self, device: &wgpu::Device) -> u64 {
+        let buffers: Vec<wgpu::Buffer> = self
+            .sizes
+            .iter()
+            .map(|size| {
+                device.create_buffer(&wgpu::BufferDescriptor {
+                    label: None,
+                    size: *size,
+                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
+                    mapped_at_creation: false,
+                })
+            })
+            .collect();
+
+        let mut entries: Vec<wgpu::BindGroupEntry<'_>> = Vec::new();
+        for (i, _size) in self.sizes.iter().enumerate() {
+            entries.push(wgpu::BindGroupEntry {
+                binding: i as u32,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &buffers[i],
+                    offset: 0,
+                    size: None,
+                }),
+            });
+        }
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &self.bind_group_layout,
+            entries: &entries,
+        });
+        self.bind_groups.push((buffers, bind_group));
+        (self.bind_groups.len() - 1) as u64
     }
 
-    pub(crate) fn set(&self, render_pass: &mut wgpu::RenderPass, bind_group_index: u32) {
-        render_pass.set_bind_group(bind_group_index, &self.bind_group, &[]);
+    pub(crate) fn has_bind_group(&self, bind_group_id: u64) -> bool {
+        bind_group_id < self.bind_groups.len() as u64
+    }
+
+    // write entire bind group.
+    // each entry of `data` represent each binding.
+    pub(crate) fn write(&self, queue: &wgpu::Queue, bind_group_id: u64, data: &[&[u8]]) {
+        for (i, (_size, data_entry)) in self.sizes.iter().zip(data).enumerate() {
+            queue.write_buffer(
+                &self.bind_groups[bind_group_id as usize].0[i],
+                0,
+                data_entry,
+            );
+        }
+    }
+
+    pub(crate) fn set(
+        &self,
+        render_pass: &mut wgpu::RenderPass,
+        bind_group_index: u32,
+        bind_group_id: u64,
+    ) {
+        render_pass.set_bind_group(
+            bind_group_index,
+            &self.bind_groups[bind_group_id as usize].1,
+            &[],
+        );
     }
 }

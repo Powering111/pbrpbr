@@ -19,7 +19,8 @@ struct Context {
     render_pipeline: wgpu::RenderPipeline,
     depth_texture: texture::Texture,
 
-    scene_uniform: renderer::Uniform,
+    scene_uniform: renderer::UniformGroup,
+    primitive_uniform: renderer::UniformGroup,
     vertex_buffer: renderer::VertexBuffer,
 
     scene: model::Scene,
@@ -30,11 +31,6 @@ struct Context {
     mouse_motion: (f64, f64),
     frame_instant: std::time::Instant,
     time: u64,
-
-    // temporary global material
-    roughness: f32,
-    metallic: f32,
-    hue: f32,
 }
 
 impl Context {
@@ -80,7 +76,8 @@ impl Context {
 
         let depth_texture = texture::Texture::create_depth_texture(&device, &surface_configuration);
 
-        let scene_uniform = renderer::Uniform::new(
+        // Uniforms
+        let mut scene_uniform = renderer::UniformGroup::new(
             &device,
             &[
                 size_of::<Mat4>() as u64,
@@ -89,12 +86,18 @@ impl Context {
                 size_of::<Vec3>() as u64,
             ],
         );
+        scene_uniform.add_bind_group(&device);
+        let primitive_uniform = renderer::UniformGroup::new(&device, &[32]);
+
         let vertex_buffer = renderer::VertexBuffer::new(&device);
 
         let shader = device.create_shader_module(wgpu::include_wgsl!("shader/shader.wgsl"));
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: &[&scene_uniform.bind_group_layout],
+            bind_group_layouts: &[
+                &scene_uniform.bind_group_layout,
+                &primitive_uniform.bind_group_layout,
+            ],
             immediate_size: 0,
         });
 
@@ -154,6 +157,7 @@ impl Context {
             vertex_buffer,
             depth_texture,
             scene_uniform,
+            primitive_uniform,
             scene,
             cursor_visible: true,
             focused: true,
@@ -161,9 +165,6 @@ impl Context {
             pressed_key: HashSet::new(),
             mouse_motion: (0.0, 0.0),
             time: 0,
-            roughness: 1.0,
-            metallic: 0.0,
-            hue: 1.0,
         }
     }
 
@@ -238,61 +239,20 @@ impl Context {
             self.scene.camera.yfov -= 0.5 * dt_sec
         }
         self.scene.camera.yfov = f32::clamp(self.scene.camera.yfov, 0.01, std::f32::consts::PI);
-
-        // change material
-        let mut material_changed = false;
-        if self.is_key_pressed(KeyCode::KeyU) {
-            self.roughness += 0.5 * dt_sec;
-            material_changed = true;
-        }
-        if self.is_key_pressed(KeyCode::KeyJ) {
-            self.roughness -= 0.5 * dt_sec;
-            material_changed = true;
-        }
-        if self.is_key_pressed(KeyCode::KeyI) {
-            self.metallic += 0.5 * dt_sec;
-            material_changed = true;
-        }
-        if self.is_key_pressed(KeyCode::KeyK) {
-            self.metallic -= 0.5 * dt_sec;
-            material_changed = true;
-        }
-        if self.is_key_pressed(KeyCode::KeyO) {
-            self.hue += 0.5 * dt_sec;
-            material_changed = true;
-        }
-        if self.is_key_pressed(KeyCode::KeyL) {
-            self.hue -= 0.5 * dt_sec;
-            material_changed = true;
-        }
-        if material_changed {
-            self.roughness = f32::clamp(self.roughness, 0.0, 1.0);
-            self.metallic = f32::clamp(self.metallic, 0.0, 1.0);
-            self.hue = f32::clamp(self.hue, 0.0, 1.0);
-            println!(
-                "Material: Roughness {:.3} / Metallic {:.3} / Hue {:.3}",
-                self.roughness, self.metallic, self.hue
-            );
-        }
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         let aspect_ratio =
             self.surface_configuration.width as f32 / self.surface_configuration.height as f32;
         let camera_matrix = self.scene.camera.get_matrix(aspect_ratio);
-        self.scene_uniform
-            .write(&self.queue, 0, bytemuck::cast_slice(&[camera_matrix]));
         self.scene_uniform.write(
             &self.queue,
-            1,
-            bytemuck::cast_slice(&[self.scene.camera.position]),
-        );
-        self.scene_uniform
-            .write(&self.queue, 2, bytemuck::cast_slice(&self.scene.lights));
-        self.scene_uniform.write(
-            &self.queue,
-            3,
-            bytemuck::cast_slice(&[Vec3::new(self.roughness, self.metallic, self.hue)]),
+            0,
+            &[
+                bytemuck::cast_slice(&[camera_matrix]),
+                bytemuck::cast_slice(&[self.scene.camera.position]),
+                bytemuck::cast_slice(&self.scene.lights),
+            ],
         );
 
         let mut vertices: Vec<renderer::Vertex> = Vec::new();
@@ -301,12 +261,23 @@ impl Context {
         let mut draws: Vec<(u32, u32, i32, u32)> = Vec::new();
         for mesh in self.scene.meshes.iter() {
             for primitive in mesh.primitives.iter() {
+                let instance_num = instances.len() as u32;
+
+                while !self.primitive_uniform.has_bind_group(instance_num as u64) {
+                    self.primitive_uniform.add_bind_group(&self.device);
+                }
+                self.primitive_uniform.write(
+                    &self.queue,
+                    instance_num as u64,
+                    &[bytemuck::cast_slice(&[primitive.material])],
+                );
+
                 let base_index = vertices.len() as i32;
                 draws.push((
                     indices.len() as u32,
                     indices.len() as u32 + primitive.indices.len() as u32,
                     base_index,
-                    instances.len() as u32,
+                    instance_num,
                 ));
                 vertices.extend_from_slice(primitive.vertices.as_slice());
                 indices.extend_from_slice(primitive.indices.as_slice());
@@ -359,9 +330,11 @@ impl Context {
             render_pass.set_pipeline(&self.render_pipeline);
 
             self.vertex_buffer.set(&mut render_pass);
-            self.scene_uniform.set(&mut render_pass, 0);
+            self.scene_uniform.set(&mut render_pass, 0, 0);
 
             for (index_start, index_end, base_index, instance_num) in draws {
+                self.primitive_uniform
+                    .set(&mut render_pass, 1, instance_num as u64);
                 render_pass.draw_indexed(
                     index_start..index_end,
                     base_index,
