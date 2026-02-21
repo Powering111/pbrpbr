@@ -71,25 +71,31 @@ fn fs_main(
     in: VertexOutput
 ) -> @location(0) vec4f {
     var color = vec3f(0.0);
+
+    let normal = in.normal;
+    let light_out = camera_pos - in.world_pos;
+    let view_dir = normalize(light_out);
+    
     for(var i = 0; i < 4; i++) {
         let light = lights[i];
         switch light.typ {
             case 1: {
-                let normal = in.normal;
                 let light_in = in.world_pos - light.pos;
-                let light_out = camera_pos - in.world_pos;
-
                 let light_dir = normalize(-light_in);
-                let view_dir = normalize(light_out);
-
 
                 let light_distance = length(light_in);
                 let light_power = light.intensity / (light_distance * light_distance);
+                color += brdf(light_dir, view_dir, normal) * light_power * max(dot(normal, light_dir), 0.0);
+            }
+            case 2: {
+                let light_in = light.pos;
+                let light_dir = normalize(-light_in);
 
+                let light_power = 0.2 * light.intensity;
                 color += brdf(light_dir, view_dir, normal) * light_power * max(dot(normal, light_dir), 0.0);
             }
             default: {
-
+                
             }
         }
     }

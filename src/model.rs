@@ -122,7 +122,15 @@ impl Scene {
 
         assert!(visitor.lights.len() <= 4);
         Ok(Self {
-            camera: visitor.camera.expect("scene need at least one camera"),
+            camera: visitor.camera.unwrap_or(Camera {
+                position: Vec3::ZERO,
+                yaw: 0.0,
+                pitch: 0.0,
+                roll: 0.0,
+                yfov: 1.0,
+                zfar: None,
+                znear: 0.001,
+            }),
             lights: visitor.lights,
             meshes: visitor.meshes,
         })
@@ -256,12 +264,20 @@ impl Visitor {
         }
 
         if let Some(light) = node.light() {
+            let radiant_flux = light.intensity() * 4.0 * std::f32::consts::PI / 683.0;
+            let color = light.color().into();
             match light.kind() {
                 gltf::khr_lights_punctual::Kind::Point => self.lights.push(Light {
                     typ: 1,
                     pos: transform.translation,
+                    color,
+                    radiant_flux,
+                }),
+                gltf::khr_lights_punctual::Kind::Directional => self.lights.push(Light {
+                    typ: 2,
+                    pos: transform.rotation * Vec3::NEG_Z,
                     color: light.color().into(),
-                    radiant_flux: light.intensity() * 4.0 * std::f32::consts::PI / 683.0,
+                    radiant_flux,
                 }),
                 _ => todo!(),
             }
