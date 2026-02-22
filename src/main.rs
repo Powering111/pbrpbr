@@ -82,7 +82,7 @@ impl Context {
             &[
                 size_of::<Mat4>() as u64,
                 size_of::<Vec3>() as u64,
-                4 * size_of::<model::Light>() as u64,
+                4 * size_of::<model::LightRaw>() as u64,
                 size_of::<Vec3>() as u64,
             ],
         );
@@ -145,7 +145,7 @@ impl Context {
             cache: None,
         });
 
-        let scene = model::Scene::from_glb("res/scene.glb").unwrap();
+        let scene = model::Scene::from_glb("res/scene2.glb").unwrap();
 
         Self {
             window,
@@ -245,13 +245,16 @@ impl Context {
         let aspect_ratio =
             self.surface_configuration.width as f32 / self.surface_configuration.height as f32;
         let camera_matrix = self.scene.camera.get_matrix(aspect_ratio);
+
+        let lights: Vec<model::LightRaw> =
+            self.scene.lights.iter().map(|light| light.raw()).collect();
         self.scene_uniform.write(
             &self.queue,
             0,
             &[
                 bytemuck::cast_slice(&[camera_matrix]),
                 bytemuck::cast_slice(&[self.scene.camera.position]),
-                bytemuck::cast_slice(&self.scene.lights),
+                bytemuck::cast_slice(&lights),
             ],
         );
 

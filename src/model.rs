@@ -97,13 +97,99 @@ impl Camera {
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum Light {
+    Point {
+        pos: Vec3,
+        color: Vec3,
+        radiant_flux: f32,
+    },
+    Directional {
+        direction: Vec3,
+        color: Vec3,
+        radiant_flux: f32,
+    },
+    Spot {
+        pos: Vec3,
+        direction: Vec3,
+        color: Vec3,
+        inner_cone_angle: f32,
+        outer_cone_angle: f32,
+        radiant_flux: f32,
+    },
+}
+
+impl Light {
+    pub fn raw(&self) -> LightRaw {
+        match self {
+            Light::Point {
+                pos,
+                color,
+                radiant_flux,
+            } => LightRaw {
+                pos: *pos,
+                typ: 1,
+                color: *color,
+                radiant_flux: *radiant_flux,
+                direction: Vec3::ZERO,
+                extra1: 0.0,
+                extra2: 0.0,
+                _pad1: 0.0,
+                _pad2: 0.0,
+                _pad3: 0.0,
+            },
+            Light::Directional {
+                direction,
+                color,
+                radiant_flux,
+            } => LightRaw {
+                pos: Vec3::ZERO,
+                typ: 2,
+                color: *color,
+                radiant_flux: *radiant_flux,
+                direction: *direction,
+                extra1: 0.0,
+                extra2: 0.0,
+                _pad1: 0.0,
+                _pad2: 0.0,
+                _pad3: 0.0,
+            },
+            Light::Spot {
+                pos,
+                direction,
+                color,
+                inner_cone_angle,
+                outer_cone_angle,
+                radiant_flux,
+            } => LightRaw {
+                pos: *pos,
+                typ: 3,
+                color: *color,
+                radiant_flux: *radiant_flux,
+                direction: *direction,
+                extra1: *inner_cone_angle,
+                extra2: *outer_cone_angle,
+                _pad1: 0.0,
+                _pad2: 0.0,
+                _pad3: 0.0,
+            },
+        }
+    }
+}
+
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug, bytemuck::Zeroable, bytemuck::Pod)]
-pub struct Light {
+pub struct LightRaw {
     pub pos: Vec3,
     pub typ: u32,
     pub color: Vec3,
     pub radiant_flux: f32,
+    pub direction: Vec3,
+    pub extra1: f32,
+    pub extra2: f32,
+    pub _pad1: f32,
+    pub _pad2: f32,
+    pub _pad3: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -267,19 +353,29 @@ impl Visitor {
             let radiant_flux = light.intensity() * 4.0 * std::f32::consts::PI / 683.0;
             let color = light.color().into();
             match light.kind() {
-                gltf::khr_lights_punctual::Kind::Point => self.lights.push(Light {
-                    typ: 1,
+                gltf::khr_lights_punctual::Kind::Point => self.lights.push(Light::Point {
                     pos: transform.translation,
                     color,
                     radiant_flux,
                 }),
-                gltf::khr_lights_punctual::Kind::Directional => self.lights.push(Light {
-                    typ: 2,
-                    pos: transform.rotation * Vec3::NEG_Z,
-                    color: light.color().into(),
+                gltf::khr_lights_punctual::Kind::Directional => {
+                    self.lights.push(Light::Directional {
+                        direction: transform.rotation * Vec3::NEG_Z,
+                        color,
+                        radiant_flux,
+                    })
+                }
+                gltf::khr_lights_punctual::Kind::Spot {
+                    inner_cone_angle,
+                    outer_cone_angle,
+                } => self.lights.push(Light::Spot {
+                    pos: transform.translation,
+                    direction: transform.rotation * Vec3::NEG_Z,
+                    color,
+                    inner_cone_angle,
+                    outer_cone_angle,
                     radiant_flux,
                 }),
-                _ => todo!(),
             }
         }
 

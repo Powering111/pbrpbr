@@ -36,6 +36,9 @@ struct Light {
     typ: u32,
     color: vec3f,
     intensity: f32,
+    direction: vec3f,
+    extra1: f32,
+    extra2: f32,
 }
 
 struct Material {
@@ -80,6 +83,7 @@ fn fs_main(
         let light = lights[i];
         switch light.typ {
             case 1: {
+                // Point light
                 let light_in = in.world_pos - light.pos;
                 let light_dir = normalize(-light_in);
 
@@ -88,10 +92,32 @@ fn fs_main(
                 color += brdf(light_dir, view_dir, normal) * light_power * max(dot(normal, light_dir), 0.0);
             }
             case 2: {
-                let light_in = light.pos;
+                // Directional light
+                let light_in = light.direction;
                 let light_dir = normalize(-light_in);
 
                 let light_power = 0.2 * light.intensity;
+                color += brdf(light_dir, view_dir, normal) * light_power * max(dot(normal, light_dir), 0.0);
+            }
+            case 3: {
+                // Spot light
+                let light_in = in.world_pos - light.pos;
+                let light_dir = normalize(-light_in);
+
+                let angle = acos(dot(light.direction,-light_dir));
+                var falloff = 0.0;
+                if angle < light.extra1 {
+                    falloff = 1.0;
+                }
+                else if angle < light.extra2 {
+                    falloff = (light.extra2 - angle) / (light.extra2 - light.extra1);
+                }
+                else {
+                    break;
+                }
+
+                let light_distance = length(light_in);
+                let light_power = 0.2 * light.intensity * falloff / (light_distance * light_distance);
                 color += brdf(light_dir, view_dir, normal) * light_power * max(dot(normal, light_dir), 0.0);
             }
             default: {
@@ -99,6 +125,9 @@ fn fs_main(
             }
         }
     }
+
+    // ambient
+    color += 0.1 * material.base_color.xyz;
 
     color = tone_map(color);
     return vec4f(color, 1.0);
