@@ -50,11 +50,16 @@ impl Texture {
         Self { texture, view }
     }
 
-    pub fn create_depth_texture(device: &wgpu::Device, width: u32, height: u32) -> Self {
+    pub fn create_depth_texture(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        layers: u32,
+    ) -> Self {
         let size = wgpu::Extent3d {
             width,
             height,
-            depth_or_array_layers: 1,
+            depth_or_array_layers: layers,
         };
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: None,

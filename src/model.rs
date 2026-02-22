@@ -121,12 +121,14 @@ pub enum Light {
 
 impl Light {
     pub fn raw(&self) -> LightRaw {
+        let matrix = self.matrix();
         match self {
             Light::Point {
                 pos,
                 color,
                 radiant_flux,
             } => LightRaw {
+                matrix,
                 pos: *pos,
                 typ: 1,
                 color: *color,
@@ -143,6 +145,7 @@ impl Light {
                 color,
                 radiant_flux,
             } => LightRaw {
+                matrix,
                 pos: Vec3::ZERO,
                 typ: 2,
                 color: *color,
@@ -162,6 +165,7 @@ impl Light {
                 outer_cone_angle,
                 radiant_flux,
             } => LightRaw {
+                matrix,
                 pos: *pos,
                 typ: 3,
                 color: *color,
@@ -179,15 +183,15 @@ impl Light {
     // matrix mapping world space coordinate into light space.
     pub fn matrix(&self) -> Mat4 {
         match self {
-            Light::Point { .. } => todo!(),
-            Light::Directional { .. } => todo!(),
+            Light::Point { .. } => Mat4::IDENTITY,
+            Light::Directional { .. } => Mat4::IDENTITY,
             Light::Spot {
                 pos,
                 direction,
                 outer_cone_angle,
                 ..
             } => {
-                Mat4::perspective_infinite_rh(*outer_cone_angle, 1.0, 0.0001)
+                Mat4::perspective_infinite_rh(2.0 * outer_cone_angle, 1.0, 0.0001)
                     * Mat4::look_to_rh(*pos, *direction, Vec3::Y)
             }
         }
@@ -197,6 +201,7 @@ impl Light {
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug, bytemuck::Zeroable, bytemuck::Pod)]
 pub struct LightRaw {
+    pub matrix: Mat4,
     pub pos: Vec3,
     pub typ: u32,
     pub color: Vec3,

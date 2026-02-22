@@ -32,6 +32,7 @@ const PI:f32 = 3.14159265;
 
 
 struct Light {
+    matrix: mat4x4f,
     pos: vec3f,
     typ: u32,
     color: vec3f,
@@ -67,6 +68,12 @@ fn vs_main(
 var<uniform> lights: array<Light, 4>;
 
 @group(1) @binding(0)
+var fsampler: sampler;
+
+@group(1) @binding(1)
+var shadow_maps: texture_depth_2d_array;
+
+@group(2) @binding(0)
 var<uniform> material: Material;
 
 @fragment
@@ -81,6 +88,12 @@ fn fs_main(
     
     for(var i = 0; i < 4; i++) {
         let light = lights[i];
+        let light_space_pos = into_vec3_pos(light.matrix * vec4f(in.world_pos, 1.0));
+        let shadow_depth = textureSample(shadow_maps, fsampler, ndc_to_uv(light_space_pos.xy), i);
+        if light_space_pos.z - 0.000001 > shadow_depth {
+            continue;
+        }
+        
         switch light.typ {
             case 1: {
                 // Point light
@@ -133,8 +146,17 @@ fn fs_main(
     return vec4f(color, 1.0);
 }
 
+@vertex
+fn vs_light(
+    in: VertexInput,
+) -> @builtin(position) vec4f {
+    let model = mat4x4f(in.model_0, in.model_1, in.model_2, in.model_3);
+    let world_pos = model * vec4f(in.position, 1.0);
+    return camera * world_pos;
+}
+
 @fragment
-fn fs_noop(in: VertexOutput) -> @location(0) vec4f {
+fn fs_light() -> @location(0) vec4f {
     return vec4f(0.0, 0.0, 0.0, 1.0);
 }
 
@@ -184,47 +206,10 @@ fn tone_map(hdr: vec3f) -> vec3f {
     return clamp(m2 * (a / b), vec3(0.0), vec3(1.0));
 }
 
-@group(0) @binding(0)
-var fsampler: sampler;
-
-@group(0) @binding(1)
-var shadow_map_1: texture_depth_2d;
-
-struct VertexFullOutput {
-    @builtin(position) pos: vec4f,
-    @location(0) clip_pos: vec4f,
+fn into_vec3_pos(pos: vec4f) -> vec3f {
+    return pos.xyz / pos.w;
 }
 
-@vertex
-fn vs_full(@builtin(vertex_index) index: u32) -> VertexFullOutput {
-    let pos = array<vec4f, 6>(
-        vec4f(-1.0, -1.0, 0.0, 1.0),
-        vec4f(1.0, -1.0, 0.0, 1.0),
-        vec4f(1.0, 1.0, 0.0, 1.0),
-        vec4f(-1.0, -1.0, 0.0, 1.0),
-        vec4f(1.0, 1.0, 0.0, 1.0),
-        vec4f(-1.0, 1.0, 0.0, 1.0),
-    )[index];
-
-    var out = VertexFullOutput(
-        pos,
-        pos,
-    );
-    return out;
-}
-
-@fragment
-fn fs_full(@location(0) clip_pos: vec4f) -> @location(0) vec4f{
-    var texture_pos = clip_pos.xy * 0.5 + vec2f(0.5);
-    texture_pos.y = 1.0 - texture_pos.y;
-    let depth = textureSample(shadow_map_1, fsampler, texture_pos);
-
-    // let k = (depth - 0.995) * 200.0;
-    let k = (depth - 0.99998) * 50000.0;
-    if depth == 1.0 {
-        return vec4f(0.0, 0.0, 0.0, 1.0);
-    }
-    else {
-        return vec4f(vec3f(k), 1.0);
-    }
+fn ndc_to_uv(coord: vec2f) -> vec2f {
+    return vec2f(fma(coord.x, 0.5, 0.5), fma(coord.y, -0.5, 0.5));
 }

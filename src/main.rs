@@ -46,7 +46,17 @@ impl Context {
             .unwrap();
 
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default())
+            .request_device(&wgpu::DeviceDescriptor {
+                required_features: wgpu::Features {
+                    features_wgpu: wgpu::FeaturesWGPU::TEXTURE_BINDING_ARRAY,
+                    features_webgpu: wgpu::FeaturesWebGPU::default(),
+                },
+                required_limits: wgpu::Limits {
+                    max_binding_array_elements_per_shader_stage: 4,
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
             .await
             .unwrap();
 
