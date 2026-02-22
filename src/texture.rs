@@ -4,7 +4,6 @@ use image::GenericImageView;
 pub struct Texture {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
-    pub sampler: wgpu::Sampler,
 }
 
 impl Texture {
@@ -47,31 +46,14 @@ impl Texture {
         );
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: None,
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
-            ..Default::default()
-        });
 
-        Self {
-            texture,
-            view,
-            sampler,
-        }
+        Self { texture, view }
     }
 
-    pub fn create_depth_texture(
-        device: &wgpu::Device,
-        configuration: &wgpu::SurfaceConfiguration,
-    ) -> Self {
+    pub fn create_depth_texture(device: &wgpu::Device, width: u32, height: u32) -> Self {
         let size = wgpu::Extent3d {
-            width: configuration.width,
-            height: configuration.height,
+            width,
+            height,
             depth_or_array_layers: 1,
         };
         let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -87,21 +69,6 @@ impl Texture {
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: None,
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
-            ..Default::default()
-        });
-
-        Self {
-            texture,
-            view,
-            sampler,
-        }
+        Self { texture, view }
     }
 }

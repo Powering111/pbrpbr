@@ -133,6 +133,11 @@ fn fs_main(
     return vec4f(color, 1.0);
 }
 
+@fragment
+fn fs_noop(in: VertexOutput) -> @location(0) vec4f {
+    return vec4f(0.0, 0.0, 0.0, 1.0);
+}
+
 fn brdf(light_dir: vec3f, view_dir: vec3f, normal: vec3f) -> vec3f {
     let halfway = normalize(light_dir + view_dir);
 
@@ -177,4 +182,49 @@ fn tone_map(hdr: vec3f) -> vec3f {
     let a = v * (v + 0.0245786) - 0.000090537;
     let b = v * (0.983729 * v + 0.4329510) + 0.238081;
     return clamp(m2 * (a / b), vec3(0.0), vec3(1.0));
+}
+
+@group(0) @binding(0)
+var fsampler: sampler;
+
+@group(0) @binding(1)
+var shadow_map_1: texture_depth_2d;
+
+struct VertexFullOutput {
+    @builtin(position) pos: vec4f,
+    @location(0) clip_pos: vec4f,
+}
+
+@vertex
+fn vs_full(@builtin(vertex_index) index: u32) -> VertexFullOutput {
+    let pos = array<vec4f, 6>(
+        vec4f(-1.0, -1.0, 0.0, 1.0),
+        vec4f(1.0, -1.0, 0.0, 1.0),
+        vec4f(1.0, 1.0, 0.0, 1.0),
+        vec4f(-1.0, -1.0, 0.0, 1.0),
+        vec4f(1.0, 1.0, 0.0, 1.0),
+        vec4f(-1.0, 1.0, 0.0, 1.0),
+    )[index];
+
+    var out = VertexFullOutput(
+        pos,
+        pos,
+    );
+    return out;
+}
+
+@fragment
+fn fs_full(@location(0) clip_pos: vec4f) -> @location(0) vec4f{
+    var texture_pos = clip_pos.xy * 0.5 + vec2f(0.5);
+    texture_pos.y = 1.0 - texture_pos.y;
+    let depth = textureSample(shadow_map_1, fsampler, texture_pos);
+
+    // let k = (depth - 0.995) * 200.0;
+    let k = (depth - 0.99998) * 50000.0;
+    if depth == 1.0 {
+        return vec4f(0.0, 0.0, 0.0, 1.0);
+    }
+    else {
+        return vec4f(vec3f(k), 1.0);
+    }
 }

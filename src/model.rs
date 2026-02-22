@@ -79,7 +79,7 @@ impl Camera {
         }) * Mat4::look_to_rh(self.position, self.direction(), self.up_vec())
     }
 
-    fn direction(&self) -> Vec3 {
+    pub fn direction(&self) -> Vec3 {
         Quat::from_euler(glam::EulerRot::ZXYEx, self.roll, self.pitch, self.yaw) * Vec3::NEG_Z
     }
 
@@ -173,6 +173,23 @@ impl Light {
                 _pad2: 0.0,
                 _pad3: 0.0,
             },
+        }
+    }
+
+    // matrix mapping world space coordinate into light space.
+    pub fn matrix(&self) -> Mat4 {
+        match self {
+            Light::Point { .. } => todo!(),
+            Light::Directional { .. } => todo!(),
+            Light::Spot {
+                pos,
+                direction,
+                outer_cone_angle,
+                ..
+            } => {
+                Mat4::perspective_infinite_rh(*outer_cone_angle, 1.0, 0.0001)
+                    * Mat4::look_to_rh(*pos, *direction, Vec3::Y)
+            }
         }
     }
 }

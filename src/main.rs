@@ -1,6 +1,6 @@
 use std::{collections::HashSet, sync::Arc, time::Instant};
 
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use winit::{
     event::{ElementState, KeyEvent, WindowEvent},
     keyboard::{KeyCode, PhysicalKey},
@@ -16,12 +16,8 @@ struct Context {
     device: wgpu::Device,
     queue: wgpu::Queue,
     surface_configuration: wgpu::SurfaceConfiguration,
-    render_pipeline: wgpu::RenderPipeline,
-    depth_texture: texture::Texture,
 
-    scene_uniform: renderer::UniformGroup,
-    primitive_uniform: renderer::UniformGroup,
-    vertex_buffer: renderer::VertexBuffer,
+    renderer: renderer::Renderer,
 
     scene: model::Scene,
 
@@ -74,76 +70,7 @@ impl Context {
         };
         surface.configure(&device, &surface_configuration);
 
-        let depth_texture = texture::Texture::create_depth_texture(&device, &surface_configuration);
-
-        // Uniforms
-        let mut scene_uniform = renderer::UniformGroup::new(
-            &device,
-            &[
-                size_of::<Mat4>() as u64,
-                size_of::<Vec3>() as u64,
-                4 * size_of::<model::LightRaw>() as u64,
-                size_of::<Vec3>() as u64,
-            ],
-        );
-        scene_uniform.add_bind_group(&device);
-        let primitive_uniform = renderer::UniformGroup::new(&device, &[32]);
-
-        let vertex_buffer = renderer::VertexBuffer::new(&device);
-
-        let shader = device.create_shader_module(wgpu::include_wgsl!("shader/shader.wgsl"));
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: None,
-            bind_group_layouts: &[
-                &scene_uniform.bind_group_layout,
-                &primitive_uniform.bind_group_layout,
-            ],
-            immediate_size: 0,
-        });
-
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: None,
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[renderer::Vertex::desc(), renderer::Instance::desc()],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_configuration.format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                unclipped_depth: false,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                conservative: false,
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview_mask: None,
-            cache: None,
-        });
+        let renderer = renderer::Renderer::new(&device, &surface_configuration);
 
         let scene = model::Scene::from_glb("res/scene2.glb").unwrap();
 
@@ -153,11 +80,7 @@ impl Context {
             device,
             queue,
             surface_configuration,
-            render_pipeline,
-            vertex_buffer,
-            depth_texture,
-            scene_uniform,
-            primitive_uniform,
+            renderer,
             scene,
             cursor_visible: true,
             focused: true,
@@ -242,110 +165,21 @@ impl Context {
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        let aspect_ratio =
-            self.surface_configuration.width as f32 / self.surface_configuration.height as f32;
-        let camera_matrix = self.scene.camera.get_matrix(aspect_ratio);
-
-        let lights: Vec<model::LightRaw> =
-            self.scene.lights.iter().map(|light| light.raw()).collect();
-        self.scene_uniform.write(
-            &self.queue,
-            0,
-            &[
-                bytemuck::cast_slice(&[camera_matrix]),
-                bytemuck::cast_slice(&[self.scene.camera.position]),
-                bytemuck::cast_slice(&lights),
-            ],
-        );
-
-        let mut vertices: Vec<renderer::Vertex> = Vec::new();
-        let mut indices: Vec<u32> = Vec::new();
-        let mut instances: Vec<renderer::Instance> = Vec::new();
-        let mut draws: Vec<(u32, u32, i32, u32)> = Vec::new();
-        for mesh in self.scene.meshes.iter() {
-            for primitive in mesh.primitives.iter() {
-                let instance_num = instances.len() as u32;
-
-                while !self.primitive_uniform.has_bind_group(instance_num as u64) {
-                    self.primitive_uniform.add_bind_group(&self.device);
-                }
-                self.primitive_uniform.write(
-                    &self.queue,
-                    instance_num as u64,
-                    &[bytemuck::cast_slice(&[primitive.material])],
-                );
-
-                let base_index = vertices.len() as i32;
-                draws.push((
-                    indices.len() as u32,
-                    indices.len() as u32 + primitive.indices.len() as u32,
-                    base_index,
-                    instance_num,
-                ));
-                vertices.extend_from_slice(primitive.vertices.as_slice());
-                indices.extend_from_slice(primitive.indices.as_slice());
-
-                instances.push(renderer::Instance {
-                    model: mesh.transform.matrix(),
-                    rot: mesh.transform.rot(),
-                });
-            }
-        }
-
-        self.vertex_buffer
-            .write(&self.device, &self.queue, &vertices, &indices, &instances);
-
         let output = self.surface.get_current_texture()?;
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self
+        let mut command_encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: None,
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.0,
-                            g: 0.0,
-                            b: 0.0,
-                            a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_texture.view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                ..Default::default()
-            });
 
-            render_pass.set_pipeline(&self.render_pipeline);
+        self.renderer
+            .write_vertex(&self.device, &self.queue, &self.scene);
+        self.renderer
+            .render(&mut command_encoder, &view, &self.queue, &self.scene);
 
-            self.vertex_buffer.set(&mut render_pass);
-            self.scene_uniform.set(&mut render_pass, 0, 0);
+        self.queue.submit(std::iter::once(command_encoder.finish()));
 
-            for (index_start, index_end, base_index, instance_num) in draws {
-                self.primitive_uniform
-                    .set(&mut render_pass, 1, instance_num as u64);
-                render_pass.draw_indexed(
-                    index_start..index_end,
-                    base_index,
-                    instance_num..instance_num + 1,
-                );
-            }
-        }
-        self.queue.submit(std::iter::once(encoder.finish()));
         self.window.pre_present_notify();
         output.present();
 
@@ -365,8 +199,7 @@ impl Context {
         self.surface
             .configure(&self.device, &self.surface_configuration);
 
-        self.depth_texture =
-            texture::Texture::create_depth_texture(&self.device, &self.surface_configuration);
+        self.renderer.resize(&self.device, width, height);
 
         self.window.request_redraw();
     }
