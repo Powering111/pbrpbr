@@ -89,10 +89,20 @@ fn fs_main(
     for(var i = 0; i < 4; i++) {
         let light = lights[i];
         let light_space_pos = into_vec3_pos(light.matrix * vec4f(in.world_pos, 1.0));
-        let shadow_depth = textureSample(shadow_maps, fsampler, ndc_to_uv(light_space_pos.xy), i);
-        if light_space_pos.z - 0.000001 > shadow_depth {
-            continue;
+        var shadow = 0.0;
+
+        let shadow_map_texel_size = 1.0 / vec2f(textureDimensions(shadow_maps, i));
+        for(var x = -1; x <= 1; x++){
+            for(var y = -1; y <= 1; y++){
+                let tex_coord = ndc_to_uv(light_space_pos.xy) + (vec2f(f32(x), f32(y)) * shadow_map_texel_size);
+                let shadow_depth = textureSample(shadow_maps, fsampler, tex_coord, i);
+
+                if light_space_pos.z - 0.0000003 > shadow_depth {
+                    shadow += 1.0;
+                }
+            }
         }
+        shadow /= 9.0;
         
         switch light.typ {
             case 1: {
@@ -130,7 +140,7 @@ fn fs_main(
                 }
 
                 let light_distance = length(light_in);
-                let light_power = 0.2 * light.intensity * falloff / (light_distance * light_distance);
+                let light_power = (1.0 - shadow) * 0.2 * light.intensity * falloff / (light_distance * light_distance);
                 color += brdf(light_dir, view_dir, normal) * light_power * max(dot(normal, light_dir), 0.0);
             }
             default: {
